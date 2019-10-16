@@ -60,9 +60,47 @@ class TestServer(AioHTTPTestCase):
         msg = (await resp.json())['msg']
         assert msg == self.ok_msg
 
+    async def note_post_ok(self, text):
+        resp = await self.client.request('POST', '/notes', json={'auth': self.auth, 'text': text})
+        assert resp.status == 200
+        msg = (await resp.json())['msg']
+        assert msg == self.ok_msg
+
+    async def note_get_ids_ok(self):
+        resp = await self.client.request('GET', '/notes', json={'auth': self.auth})
+        assert resp.status == 200
+        data = await resp.json()
+        msg = data['msg']
+        assert msg == self.ok_msg
+        return data['note_ids']
+
+    async def note_get_ok(self, id):
+        resp = await self.client.request('GET', f'/notes/{id}', json={'auth': self.auth})
+        assert resp.status == 200
+        data = await resp.json()
+        msg = data['msg']
+        assert msg == self.ok_msg
+        return data['text']
+
+    async def note_update_ok(self, id, text):
+        resp = await self.client.request('POST', f'/notes/{id}', json={'auth': self.auth, 'text': text})
+        assert resp.status == 200
+        msg = (await resp.json())['msg']
+        assert msg == self.ok_msg
+
     @unittest_run_loop
     async def test_process(self):
         await self.register_ok()
         await self.login_ok()
         await self.get_ok()
+        text = "1234567"
+        await self.note_post_ok(text)
+        ids = await self.note_get_ids_ok()
+        assert len(ids) == 1
+        note = await self.note_get_ok(ids[0])
+        assert note == text
+        text = "qwertty"
+        await self.note_update_ok(ids[0], text)
+        note = await self.note_get_ok(ids[0])
+        assert note == text
         await self.delete_ok()

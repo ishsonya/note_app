@@ -26,10 +26,13 @@ def auth(data, db):
 def db_request(command, db, emsg='Error'):
     try:
         r = db.execute(command)
-        return r.fetchall()
     except Exception as e:
         logger.error(e)
         return False, web.json_response({'msg': emsg})
+    try:
+        return True, r.fetchall()
+    except:
+        return True, r
 
 
 def hash(s):
@@ -125,6 +128,11 @@ async def delete(request):
     if not ok:
         return r
 
+    command = f'delete from notes where uname = "{meta.get("uname")}"'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
+
     return web.json_response(data={'msg': request.app['ok_msg']})
 
 
@@ -137,7 +145,7 @@ async def note_create(request):
     if not validate(data) or not validate(meta):
         return web.json_response(data={'msg': 'invalid input'})
     command = f'insert into notes (text, note_id, uname) values ' \
-              f'("{data["text"]}", "{meta["uname"]}", "{randint(1, 10 ** 9)}")'
+              f'("{data["text"]}", "{randint(1, 10 ** 9)}", "{meta["uname"]}")'
     ok, r = db_request(command, db)
     if not ok:
         return r
