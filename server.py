@@ -1,5 +1,5 @@
 from _hashlib import openssl_md5
-from random import random
+from random import random, randint
 
 from aiohttp import web
 from aiohttp.web_app import Application
@@ -12,17 +12,24 @@ def auth(data, db):
     if not validate(data):
         return False, web.json_response(data={'msg': 'invalid_data'})
     token = data['auth']
-    try:
-        command = f'select uname, token from sessions where token = "{token}"'
-        r = db.execute(command)
-        r = r.fetchall()
-    except Exception as e:
-        logger.error(e)
-        return False, web.json_response({'msg': 'Authentication error'})
+    command = f'select uname, token from sessions where token = "{token}"'
+    ok, r = db_request(command, db, 'Authentication error')
+    if not ok:
+        return r
+
     if not r:
         return False, web.json_response({'msg': 'Authentication error'})
     meta = {'uname': r[0][0]}
     return True, meta
+
+
+def db_request(command, db, emsg='Error'):
+    try:
+        r = db.execute(command)
+        return r.fetchall()
+    except Exception as e:
+        logger.error(e)
+        return False, web.json_response({'msg': emsg})
 
 
 def hash(s):
@@ -46,12 +53,9 @@ async def register(request):
     age = data['age']
     command = f'insert into users (uname, phash, name, age) values ' \
               f'("{uname}", "{phash}", "{name}", {age})'
-    try:
-        db.execute(command)
-    except Exception as e:
-        logger.error(e)
-        return web.json_response(data={'msg': 'Login exists'})
-    await request.json()
+    ok, r = db_request(command, db, 'Login exists')
+    if not ok:
+        return r
     return web.json_response(data={'msg': request.app['ok_msg']})
 
 
@@ -64,12 +68,9 @@ async def login(request):
     password = data['password']
     phash = hash(password)
     command = f'select phash from users where uname = "{uname}"'
-    try:
-        r = db.execute(command)
-        r = r.fetchall()
-    except Exception as e:
-        logger.error(e)
-        return web.json_response(data={'msg': 'Error'})
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
 
     if not r or phash != r[0][0]:
         return web.json_response(data={'msg': 'Invalid login or password'})
@@ -90,18 +91,23 @@ async def info(request):
     ok, meta = auth(data, db)
     if not ok:
         return meta
-    try:
-        command = f'select name, age from users where uname = "{meta["uname"]}"'
-        r = db.execute(command).fetchall()
-    except Exception as e:
-        logger.error(e)
-        return web.json_response(data={'msg': 'Error'})
+    command = f'select name, age from users where uname = "{meta["uname"]}"'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
     if not r or len(r[0]) != 2:
         return web.json_response(data={'msg': 'Error'})
-    return web.json_response(data={'msg': request.app['ok_msg'], 'age':r[0][1], 'name': r[0][0]})
+    return web.json_response(data={'msg': request.app['ok_msg'], 'age': r[0][1], 'name': r[0][0]})
 
 
 async def delete(request):
+    """
+    Delete user session
+    Delete user
+    Delete user notes
+    :param request:
+    :return:
+    """
     db = request.app['con']
     data = await request.json()
     ok, meta = auth(data, db)
@@ -110,14 +116,81 @@ async def delete(request):
     if not validate(meta):
         return web.json_response(data={'msg': 'invalid data'})
     logger.info(meta)
-    try:
-        command = f'delete from sessions where uname = "{meta.get("uname")}"'
-        db.execute(command)
-        command = f'delete from users where uname = "{meta.get("uname")}"'
-        db.execute(command)
-    except Exception as e:
-        logger.error(e)
-        return web.json_response(data={'msg': 'error'})
+    command = f'delete from sessions where uname = "{meta.get("uname")}"'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
+    command = f'delete from users where uname = "{meta.get("uname")}"'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
+
+    return web.json_response(data={'msg': request.app['ok_msg']})
+
+
+async def note_create(request):
+    db = request.app['con']
+    data = await request.json()
+    ok, meta = auth(data, db)
+    if not ok:
+        return meta
+    if not validate(data) or not validate(meta):
+        return web.json_response(data={'msg': 'invalid input'})
+    command = f'insert into notes (text, note_id, uname) values ' \
+              f'("{data["text"]}", "{meta["uname"]}", "{randint(1, 10 ** 9)}")'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
+    return web.json_response(data={"msg": request.app['ok_msg']})
+
+
+async def notes_get(request):
+    db = request.app['con']
+    data = await request.json()
+    ok, meta = auth(data, db)
+    if not ok:
+        return meta
+    if not validate(data) or not validate(meta):
+        return web.json_response(data={'msg': 'invalid input'})
+    command = f'select note_id from notes where uname = "{meta["uname"]}"'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
+    ids = [x[0] for x in r]
+    return web.json_response(data={'msg': request.app['ok_msg'], 'note_ids': ids})
+
+
+async def note_get(request):
+    db = request.app['con']
+    data = await request.json()
+    ok, meta = auth(data, db)
+    note_id = request.match_info.get('note_id')
+    if not ok:
+        return meta
+    if not validate(data) or not validate(meta) or note_id is None:
+        return web.json_response(data={'msg': 'invalid input'})
+
+    command = f'select text from notes where note_id = "{note_id}" and uname = "{meta["uname"]}"'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
+    return web.json_response(data={'msg': request.app['ok_msg'], 'text': r[0][0]})
+
+
+async def note_update(request):
+    db = request.app['con']
+    data = await request.json()
+    ok, meta = auth(data, db)
+    note_id = request.match_info.get('note_id')
+    if not ok:
+        return meta
+    if not validate(data) or not validate(meta) or note_id is None:
+        return web.json_response(data={'msg': 'invalid input'})
+
+    command = f'update notes set text = "{data["text"]}" where note_id = "{note_id}" and uname = "{meta["uname"]}"'
+    ok, r = db_request(command, db)
+    if not ok:
+        return r
     return web.json_response(data={'msg': request.app['ok_msg']})
 
 
@@ -133,7 +206,11 @@ async def init_app(connection_string) -> Application:
         web.post('/user', register),
         web.get('/user', info),
         web.delete('/user', delete),
-        web.post('/login', login)
+        web.post('/login', login),
+        web.post('/notes', note_create),
+        web.get('/notes', notes_get),
+        web.get('/notes/{note_id}', note_get),
+        web.post('/notes/{note_id}', note_update)
     ])
     return app
 
